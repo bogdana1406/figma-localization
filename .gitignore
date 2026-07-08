@@ -1,0 +1,16 @@
+# секреты
+.env
+
+# данные проектов: выгрузки и переводы — не код
+projects/*/exports/
+projects/*/translations/
+
+# служебное
+__pycache__/
+*.pyc
+.DS_Store
+.venv/
+venv/
+
+# сборка плагина, если появится
+plugin/node_modules/
