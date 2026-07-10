@@ -1,0 +1,370 @@
+<!-- ui.html — интерфейс плагина локализации -->
+<style>
+  :root {
+    --bg: #ffffff;
+    --fg: #1e1e1e;
+    --muted: #8c8c8c;
+    --line: #e5e5e5;
+    --accent: #0d99ff;
+    --accent-fg: #ffffff;
+    --ok: #14ae5c;
+    --warn: #bf6a02;
+    --err: #e03e1a;
+    --chip: #f5f5f5;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: Inter, -apple-system, sans-serif;
+    font-size: 12px; color: var(--fg); background: var(--bg);
+    margin: 0; padding: 12px;
+  }
+  h1 { font-size: 13px; font-weight: 600; margin: 0 0 2px; }
+  .sub { color: var(--muted); margin: 0 0 12px; }
+  .group { border-top: 1px solid var(--line); padding: 10px 0; }
+  .group:first-of-type { border-top: none; }
+  label.row { display: flex; align-items: center; gap: 8px; margin: 6px 0; cursor: pointer; }
+  .label { font-weight: 600; display: block; margin-bottom: 4px; }
+  .hint { color: var(--muted); font-size: 11px; margin: 2px 0 0 24px; }
+  select, button { font-family: inherit; font-size: 12px; }
+  select {
+    width: 100%; padding: 6px 8px; border: 1px solid var(--line);
+    border-radius: 6px; background: var(--bg); color: var(--fg);
+  }
+  .file-btn {
+    display: inline-block; padding: 8px 12px; border: 1px dashed var(--line);
+    border-radius: 6px; width: 100%; text-align: center; cursor: pointer;
+    color: var(--muted);
+  }
+  .file-btn.loaded { border-style: solid; color: var(--fg); border-color: var(--accent); }
+  input[type=file] { display: none; }
+  .actions { display: flex; gap: 8px; margin-top: 4px; }
+  button {
+    flex: 1; padding: 9px 12px; border: none; border-radius: 6px; cursor: pointer;
+    font-weight: 600;
+  }
+  button.secondary { background: var(--chip); color: var(--fg); }
+  button.primary { background: var(--accent); color: var(--accent-fg); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .report { margin-top: 12px; }
+  .stat { display: flex; justify-content: space-between; padding: 4px 0; }
+  .stat .n { font-weight: 600; }
+  .stat.ok .n { color: var(--ok); }
+  .stat.warn .n { color: var(--warn); }
+  .stat.err .n { color: var(--err); }
+  .slides {
+    padding: 6px 8px; margin: 4px 0; background: #eef6ff; border-radius: 6px;
+    font-size: 11px; color: #0a6cbf; word-break: break-word;
+  }
+  .details {
+    margin-top: 8px; max-height: 160px; overflow: auto; background: var(--chip);
+    border-radius: 6px; padding: 8px; font-size: 11px; color: var(--muted);
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .banner { padding: 8px 10px; border-radius: 6px; margin: 8px 0; font-size: 11px; }
+  .banner.warn { background: #fff4e5; color: var(--warn); }
+  .banner.err { background: #fdecea; color: var(--err); }
+  .hidden { display: none; }
+  .id-only, .text-only { }
+</style>
+
+<h1>Импорт перевода</h1>
+<p class="sub">Загрузите финальный CSV и впишите переводы в узлы.</p>
+
+<div class="group">
+  <label class="file-btn" id="fileLabel">
+    Выбрать CSV перевода
+    <input type="file" id="file" accept=".csv" />
+  </label>
+  <div class="hint" id="fileInfo"></div>
+</div>
+
+<div class="group">
+  <span class="label">Как искать узлы</span>
+  <label class="row"><input type="radio" name="mode" value="id" checked /> По id — свежая копия того же файла</label>
+  <label class="row"><input type="radio" name="mode" value="text" /> По тексту — в файл добавлены новые слайды</label>
+</div>
+
+<!-- опции режима по id -->
+<div class="group id-only" id="idOptions">
+  <label class="row"><input type="checkbox" id="onlyNewChanged" /> Только новые и изменённые</label>
+  <div class="hint">Старые (unchanged) узлы не трогать — бережёт правки дизайнера.</div>
+</div>
+
+<!-- опции режима по тексту -->
+<div class="group text-only hidden" id="textOptions">
+  <span class="label">Где искать</span>
+  <select id="scope">
+    <option value="selection">В выделении (безопасно)</option>
+    <option value="page">На текущей странице</option>
+    <option value="all">Во всём файле</option>
+  </select>
+  <div class="hint">Выделите новые слайды перед запуском — плагин тронет только их.</div>
+</div>
+
+<div class="group">
+  <label class="row"><input type="checkbox" id="renameLayers" /> Переводить имена слоёв</label>
+  <div class="hint">По умолчанию выкл — имена слоёв остаются как есть (английскими).</div>
+</div>
+
+<div id="banner"></div>
+
+<div class="actions">
+  <button class="secondary" id="previewBtn" disabled>Предпросмотр</button>
+  <button class="primary" id="applyBtn" disabled>Применить</button>
+</div>
+
+<div class="report hidden" id="report"></div>
+
+<script>
+  var rows = [];
+  var lastPreviewOk = false;
+  var loadedFileName = "hyperocket-portuguese";
+  var lastWrittenRows = [];
+
+  // ─── Простой парсер CSV (кавычки, экранированные кавычки, переносы внутри ячеек) ───
+  function parseCSV(text) {
+    var out = [], row = [], field = "", i = 0, inQuotes = false;
+    // убираем BOM
+    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+    while (i < text.length) {
+      var c = text[i];
+      if (inQuotes) {
+        if (c === '"') {
+          if (text[i + 1] === '"') { field += '"'; i += 2; continue; }
+          inQuotes = false; i++; continue;
+        }
+        field += c; i++; continue;
+      } else {
+        if (c === '"') { inQuotes = true; i++; continue; }
+        if (c === ',') { row.push(field); field = ""; i++; continue; }
+        if (c === '\r') { i++; continue; }
+        if (c === '\n') { row.push(field); out.push(row); row = []; field = ""; i++; continue; }
+        field += c; i++; continue;
+      }
+    }
+    if (field !== "" || row.length) { row.push(field); out.push(row); }
+    return out;
+  }
+
+  function toObjects(matrix) {
+    if (!matrix.length) return [];
+    var header = matrix[0];
+    var idx = {};
+    for (var h = 0; h < header.length; h++) idx[header[h].trim()] = h;
+    var res = [];
+    for (var r = 1; r < matrix.length; r++) {
+      var m = matrix[r];
+      if (m.length === 1 && m[0] === "") continue; // пустая строка
+      res.push({
+        id: (m[idx["id"]] || "").trim(),
+        frame: (m[idx["frame"]] || "").trim(),
+        figma_text_en: m[idx["figma_text_en"]] || "",
+        figma_text: m[idx["figma_text"]] || "",
+        category: (m[idx["category"]] || "").trim(),
+        file_key: (m[idx["file_key"]] || "").trim()
+      });
+    }
+    return res;
+  }
+
+  // ─── Загрузка файла ───
+  document.getElementById("file").addEventListener("change", function (e) {
+    var f = e.target.files[0];
+    if (!f) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      try {
+        rows = toObjects(parseCSV(reader.result));
+        loadedFileName = f.name.replace(/\.csv$/i, "");
+        var withTr = rows.filter(function (x) { return x.figma_text && x.figma_text.trim(); }).length;
+        document.getElementById("fileLabel").classList.add("loaded");
+        document.getElementById("fileLabel").childNodes[0].nodeValue = f.name + " ";
+        document.getElementById("fileInfo").textContent =
+          rows.length + " строк, из них с переводом: " + withTr;
+        document.getElementById("previewBtn").disabled = rows.length === 0;
+        document.getElementById("applyBtn").disabled = true;
+        lastPreviewOk = false;
+        setBanner("");
+        document.getElementById("report").classList.add("hidden");
+      } catch (err) {
+        setBanner("err", "Не удалось прочитать CSV: " + err.message);
+      }
+    };
+    reader.readAsText(f, "utf-8");
+  });
+
+  // ─── Переключение режимов ───
+  function currentMode() {
+    var els = document.getElementsByName("mode");
+    for (var i = 0; i < els.length; i++) if (els[i].checked) return els[i].value;
+    return "id";
+  }
+  // Сброс отчёта и деактивация «Применить» при любом изменении настроек —
+  // чтобы на экране не оставались числа от прошлого предпросмотра.
+  function resetAfterChange() {
+    document.getElementById("applyBtn").disabled = true;
+    lastPreviewOk = false;
+    setBanner("");
+    document.getElementById("report").classList.add("hidden");
+  }
+
+  Array.prototype.forEach.call(document.getElementsByName("mode"), function (el) {
+    el.addEventListener("change", function () {
+      var m = currentMode();
+      document.getElementById("idOptions").classList.toggle("hidden", m !== "id");
+      document.getElementById("textOptions").classList.toggle("hidden", m !== "text");
+      resetAfterChange();
+    });
+  });
+  document.getElementById("onlyNewChanged").addEventListener("change", resetAfterChange);
+  document.getElementById("scope").addEventListener("change", resetAfterChange);
+  document.getElementById("renameLayers").addEventListener("change", resetAfterChange);
+
+  function getSettings() {
+    return {
+      mode: currentMode(),
+      scope: document.getElementById("scope").value,
+      onlyNewChanged: document.getElementById("onlyNewChanged").checked,
+      renameLayers: document.getElementById("renameLayers").checked
+    };
+  }
+
+  function setBanner(kind, text) {
+    var b = document.getElementById("banner");
+    if (!kind) { b.innerHTML = ""; return; }
+    b.innerHTML = '<div class="banner ' + kind + '">' + text + '</div>';
+  }
+
+  // ─── Кнопки ───
+  document.getElementById("previewBtn").addEventListener("click", function () {
+    setBanner("");
+    parent.postMessage({ pluginMessage: { type: "preview", rows: rows, settings: getSettings() } }, "*");
+  });
+  document.getElementById("applyBtn").addEventListener("click", function () {
+    if (!lastPreviewOk) return;
+    var ab = document.getElementById("applyBtn");
+    ab.textContent = "Применяю…";
+    ab.disabled = true;
+    document.getElementById("previewBtn").disabled = true;
+    parent.postMessage({ pluginMessage: { type: "apply", rows: rows, settings: getSettings() } }, "*");
+  });
+
+  // ─── Приём результатов ───
+  onmessage = function (event) {
+    var msg = event.data.pluginMessage;
+    if (!msg) return;
+
+    if (msg.type === "preview-result") {
+      if (msg.emptySelection) {
+        setBanner("warn", "Ничего не выделено. Выделите слайды или смените область поиска.");
+        document.getElementById("applyBtn").disabled = true;
+        return;
+      }
+      if (msg.fileKeyMismatch) {
+        setBanner("err", "Внимание: CSV выгружен из другого файла (file_key не совпадает). " +
+          "Проверьте, тот ли это файл, прежде чем применять.");
+      }
+      var html = "";
+      html += stat("ok", "Будет записано", msg.toWrite);
+      if (msg.slides) html += '<div class="slides">Слайды: ' + escapeHtml(msg.slides) + '</div>';
+      if (msg.notFoundCount) html += stat("warn", "Не найдено", msg.notFoundCount);
+      if (msg.skippedCount) html += stat("", "Пропущено фильтром", msg.skippedCount);
+      if (msg.notFoundCount) {
+        var lines = msg.notFound.map(function (x) { return "• " + (x.en || x.key); }).join("\n");
+        html += '<div class="details">Не найдено (нет соответствия):\n' + escapeHtml(lines) + '</div>';
+      }
+      showReport(html);
+      lastPreviewOk = msg.toWrite > 0;
+      document.getElementById("applyBtn").disabled = !lastPreviewOk;
+      if (msg.toWrite === 0 && !msg.fileKeyMismatch) {
+        setBanner("warn", "Нечего записывать — совпадений не найдено.");
+      }
+    }
+
+    if (msg.type === "apply-result") {
+      var h = "";
+      h += stat("ok", "Записано", msg.written);
+      if (msg.writtenSlides) h += '<div class="slides">Слайды: ' + escapeHtml(msg.writtenSlides) + '</div>';
+      if (msg.selectedCount) h += '<div class="slides">Выделено на холсте: ' + msg.selectedCount + ' — видно, что изменилось</div>';
+      if (msg.failuresCount) h += stat("err", "Не удалось", msg.failuresCount);
+      if (msg.notFoundCount) h += stat("warn", "Не найдено", msg.notFoundCount);
+      if (msg.skippedCount) h += stat("", "Пропущено фильтром", msg.skippedCount);
+      if (msg.failuresCount) {
+        var fl = msg.failures.map(function (x) { return "• " + (x.en || "") + " — " + x.reason; }).join("\n");
+        h += '<div class="details">Не удалось записать:\n' + escapeHtml(fl) + '</div>';
+      }
+      showReport(h);
+      setBanner("");
+      lastWrittenRows = msg.writtenRows || [];
+      if (lastWrittenRows.length) {
+        var dl = document.createElement("button");
+        dl.className = "primary";
+        dl.style.marginTop = "10px";
+        dl.style.width = "100%";
+        dl.textContent = "Скачать отчёт для дизайнера";
+        dl.onclick = downloadReport;
+        document.getElementById("report").appendChild(dl);
+      }
+      var ab = document.getElementById("applyBtn");
+      ab.textContent = "Применить";
+      ab.disabled = true; // повтор — через новый предпросмотр
+      document.getElementById("previewBtn").disabled = false;
+      lastPreviewOk = false;
+    }
+
+    if (msg.type === "error") {
+      setBanner("err", "Ошибка: " + msg.message);
+    }
+  };
+
+  function stat(kind, label, n) {
+    return '<div class="stat ' + kind + '"><span>' + label + '</span><span class="n">' + n + '</span></div>';
+  }
+  function showReport(html) {
+    var r = document.getElementById("report");
+    r.innerHTML = html;
+    r.classList.remove("hidden");
+  }
+  function escapeHtml(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  // ─── Отчёт для дизайнера: CSV из фактически записанных узлов ───
+  function csvCell(v) {
+    return '"' + String(v == null ? "" : v).replace(/"/g, '""') + '"';
+  }
+  function buildReportCSV(rowsData) {
+    var cols = ["frame", "layer_name", "figma_text_en", "figma_text", "category"];
+    var lines = [cols.map(csvCell).join(",")];
+    // сортируем по номеру слайда (числа по возрастанию, потом остальные)
+    rowsData.sort(function (a, b) {
+      var na = parseInt(a.frame, 10), nb = parseInt(b.frame, 10);
+      var aNum = !isNaN(na), bNum = !isNaN(nb);
+      if (aNum && bNum) return na - nb;
+      if (aNum) return -1;
+      if (bNum) return 1;
+      return String(a.frame).localeCompare(String(b.frame));
+    });
+    rowsData.forEach(function (r) {
+      lines.push([r.frame, r.layer_name, r.figma_text_en, r.figma_text, r.category].map(csvCell).join(","));
+    });
+    return "\uFEFF" + lines.join("\r\n"); // BOM для корректных кириллицы/акцентов в Excel/Sheets
+  }
+  function todayStamp() {
+    var d = new Date();
+    var p = function (n) { return (n < 10 ? "0" : "") + n; };
+    return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate());
+  }
+  function downloadReport() {
+    var csv = buildReportCSV(lastWrittenRows.slice());
+    var blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = loadedFileName + "-imported-" + todayStamp() + ".csv";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+</script>
