@@ -30,6 +30,14 @@ from dotenv import load_dotenv
 load_dotenv()
 API_KEY = os.getenv("GCP_API_KEY")
 
+# Модель Gemini. По умолчанию — актуальная стабильная gemini-3.5-flash.
+# Google периодически отключает старые модели (2.0 → 2.5 → 3.5), причём иногда
+# раньше объявленной даты. Чтобы не переписывать код при следующей смене:
+#   • можно переопределить через .env:  GEMINI_MODEL=gemini-3.5-flash
+#   • или поставить алиас 'gemini-flash-latest' — Google сам держит его на
+#     новейшей Flash-модели (но поведение может слегка меняться между версиями).
+MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
+
 
 # ─── Ядро перевода (перенесено без изменений) ─────────────────────────────────
 
@@ -43,7 +51,7 @@ def translate_text(text, prompt, client):
         return str(text)
     try:
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model=MODEL,
             contents=str(text),
             config=types.GenerateContentConfig(
                 system_instruction=prompt,
@@ -150,6 +158,7 @@ def main():
     total   = len(df)
     already = (df["figma_text"].str.strip() != "").sum()
     print(f"Проект: {args.project} | Язык: {args.lang}")
+    print(f"Модель: {MODEL}")
     print(f"Промпт: {prompt_file}")
     print(f"Всего: {total} | Переведено: {already} | Осталось: {total - already}\n")
 
