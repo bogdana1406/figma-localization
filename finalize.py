@@ -161,6 +161,7 @@ def main():
             "layer_name":    row.get("layer_name", ""),
             "figma_text_en": en_raw,
             "figma_text":    translated,
+            "category":      row.get("category", ""),
             "file_key":      row.get("file_key", ""),
         })
 
@@ -172,7 +173,7 @@ def main():
         print(f"\n🗄  Прежний финал сохранён: {backup}")
 
     # ── 5. Запись ──
-    cols = ["frame", "id", "group", "layer_name", "figma_text_en", "figma_text", "file_key"]
+    cols = ["frame", "id", "group", "layer_name", "figma_text_en", "figma_text", "category", "file_key"]
     with open(final_path, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=cols, quoting=csv.QUOTE_ALL)
         w.writeheader()
